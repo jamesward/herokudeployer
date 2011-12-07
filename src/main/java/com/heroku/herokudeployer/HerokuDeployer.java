@@ -21,8 +21,13 @@ import org.apache.commons.io.IOUtils;
 import org.eclipse.jgit.api.CloneCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.*;
+import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryBuilder;
+import org.eclipse.jgit.lib.StoredConfig;
+import org.eclipse.jgit.transport.CredentialsProvider;
+import org.eclipse.jgit.transport.OpenSshConfig;
+import org.eclipse.jgit.transport.SshSessionFactory;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -31,11 +36,13 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 public class HerokuDeployer {
 
     private static final String SSH_KEY_COMMENT = "heroku@localhost";
+    public static final String HEROKU = "heroku";
 
     public static void main(String[] args) {
         
@@ -58,11 +65,33 @@ public class HerokuDeployer {
         }
         catch (Exception e) {
             System.out.println(e.getMessage());
+            e.printStackTrace();
             System.exit(1);
         }
         
     }
 
+    public static File getProjectDir(String[] args, boolean interactive) {
+
+        File projectDirectory = null;
+
+        if (args.length == 0) {
+            projectDirectory = new File(System.getProperty("user.dir"));
+        }
+        else if (args.length == 1) {
+            projectDirectory = new File(args[0]);
+        }
+
+        if (!projectDirectory.exists()) {
+            throw new RuntimeException("Project directory does not exist: " + projectDirectory.getAbsolutePath());
+        }
+
+        if (interactive) {
+            System.out.println("Project directory: " + projectDirectory.getAbsolutePath());
+        }
+
+        return projectDirectory;
+    }
 
     public static String getHerokuApiKey(boolean interactive) throws IOException {
         
@@ -124,30 +153,7 @@ public class HerokuDeployer {
         
         return herokuApiKey;
     }
-    
 
-
-    public static File getProjectDir(String[] args, boolean interactive) {
-
-        File projectDirectory = null;
-
-        if (args.length == 0) {
-            projectDirectory = new File(".");
-        }
-        else if (args.length == 1) {
-            projectDirectory = new File(args[0]);
-        }
-
-        if (!projectDirectory.exists()) {
-            throw new RuntimeException("Project directory does not exist: " + projectDirectory.getAbsolutePath());
-        }
-        
-        if (interactive) {
-            System.out.println("Project directory: " + projectDirectory.getAbsolutePath());
-        }
-
-        return projectDirectory;
-    }
 
     private static File getSshKey(String herokuApiKey, boolean interactive) throws JSchException, IOException {
         
@@ -167,7 +173,7 @@ public class HerokuDeployer {
         for (Key key : keys) {
             Collection<File> files = FileUtils.listFiles(sshDir, new String[]{"pub"}, false);
             for (File file : files) {
-                String sshKeyString = FileUtils.readFileToString(file);
+                String sshKeyString = FileUtils.readFileToString(file).replaceAll("\n", "");
                 if (sshKeyString.equals(key.getContents())) {
                     sshKey = file;
                     
@@ -184,11 +190,20 @@ public class HerokuDeployer {
             // save it in ~/.ssh/heroku_rsa and ~/.ssh/heroku_rsa.pub
             JSch jsch = new JSch();
             KeyPair keyPair = KeyPair.genKeyPair(jsch, KeyPair.RSA);
-            keyPair.writePrivateKey(sshDir.getAbsolutePath() + File.separator + "heroku_rsa");
+            
+            File privateSshKey = new File(sshDir.getAbsolutePath() + File.separator + "heroku_rsa");
+            
+            keyPair.writePrivateKey(privateSshKey.getAbsolutePath());
+
+            privateSshKey.setReadable(false, false);
+            privateSshKey.setReadable(true, true);
             
             sshKey = new File(sshDir.getAbsolutePath() + File.separator + "heroku_rsa.pub");
             
             keyPair.writePublicKey(sshKey.getAbsolutePath(), SSH_KEY_COMMENT);
+
+            sshKey.setReadable(false, false);
+            sshKey.setReadable(true, true);
             
             if (interactive) {
                 System.out.println("Created new ssh key pair (heroku_rsa) in: " + sshDir.getAbsolutePath());
@@ -236,34 +251,66 @@ public class HerokuDeployer {
 
         String gitUrl = null;
 
-        File projectGitDir = new File(projectDir.getAbsoluteFile() + File.separator + ".git");
+        Repository gitRepo = getGitRepository(projectDir);
         
-        Repository repository = new RepositoryBuilder().setGitDir(projectGitDir).build();
+        StoredConfig storedConfig = gitRepo.getConfig();
 
         // see if a git remote named "heroku" exists
+        Set<String> remotes = storedConfig.getSubsections("remote");
+        for (String remoteName : remotes) {
+            if (remoteName.equals(HEROKU)) {
+                gitUrl = storedConfig.getString("remote", remoteName, "url");
+                
+                if (interactive) {
+                    System.out.println("Heroku application appears to exist already with a git url of: " + gitUrl);
+                }
+            }
+        }
 
         // if not then create a new one
+        if (gitUrl == null) {
+            HttpClientConnection herokuConnection = new HttpClientConnection(herokuApiKey);
 
-        HttpClientConnection herokuConnection = new HttpClientConnection(herokuApiKey);
+            // create an app on heroku
+            AppCreate cmd = new AppCreate(Heroku.Stack.Cedar);
+            App app = herokuConnection.execute(cmd);
 
-        // create an app on heroku (using heroku credentials specified in ${HEROKU_USERNAME} / ${HEROKU_PASSWORD}
-        AppCreate cmd = new AppCreate(Heroku.Stack.Cedar);
-        app = herokuConnection.execute(cmd);
+            if (interactive) {
+                System.out.println("Created app: " + app.getName() + "\n" + app.getWeb_url());
+            }
+
+            gitUrl = app.getGit_url();
 
             // add the git remote
+            storedConfig.setString("remote", HEROKU, "url", gitUrl);
 
+            storedConfig.save();
+
+            if (interactive) {
+                System.out.println("Added git remote: " + gitUrl);
+            }
+        }
+        
         return gitUrl;
     }
 
-    public static void deployApp(File sshKey, File projectDirectory, boolean interactive) {
+    public static void deployApp(File sshKey, File projectDir, boolean interactive) throws IOException, InvalidRemoteException {
+        SshSessionFactory.setInstance(new HerokuSshSessionFactory());
 
         // git push heroku master
-        Repository repository = new RepositoryBuilder().setGitDir(tmpGitDir).build();
-        gitRepo = new Git(repository);
+        Repository gitRepo = getGitRepository(projectDir);
+        Git git = new Git(gitRepo);
+        git.push().setRemote(HEROKU).call();
 
-        gitRepo.getRepository().getFS().setUserHome(new File(fakeUserHome));
-        gitRepo.push().setRemote(app.getGit_url()).call();
+        if (interactive) {
+            System.out.println("Application deployed");
+        }
+    }
 
+    private static Repository getGitRepository(File projectDir) throws IOException {
+        File projectGitDir = new File(projectDir.getAbsoluteFile() + File.separator + ".git");
+        Repository repository = new RepositoryBuilder().setGitDir(projectGitDir).build();
+        return repository;
     }
     
 }
