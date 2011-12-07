@@ -7,37 +7,24 @@ import com.heroku.api.model.Key;
 import com.heroku.api.request.app.AppCreate;
 import com.heroku.api.request.key.KeyAdd;
 import com.heroku.api.request.key.KeyList;
-import com.heroku.api.request.key.KeyRemove;
 import com.heroku.api.request.login.BasicAuthLogin;
-import com.heroku.api.request.sharing.SharingAdd;
-import com.heroku.api.request.sharing.SharingRemove;
-import com.heroku.api.request.sharing.SharingTransfer;
 import com.heroku.api.response.Unit;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.KeyPair;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
-import org.eclipse.jgit.api.CloneCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.*;
-import org.eclipse.jgit.lib.Config;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.RepositoryBuilder;
 import org.eclipse.jgit.lib.StoredConfig;
-import org.eclipse.jgit.transport.CredentialsProvider;
-import org.eclipse.jgit.transport.OpenSshConfig;
 import org.eclipse.jgit.transport.SshSessionFactory;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.util.Collection;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 public class HerokuDeployer {
 
@@ -53,12 +40,10 @@ public class HerokuDeployer {
             String herokuApiKey = getHerokuApiKey(true);
             
             File sshKey = getSshKey(herokuApiKey, true);
-
-            // todo: update the known_hosts file
     
-            commitProjectToLocalGit(projectDir, false, true);
+            commitProjectToLocalGit(projectDir, true);
     
-            String gitUrl = getOrCreateApp(herokuApiKey, projectDir, true);
+            getOrCreateApp(herokuApiKey, projectDir, true);
     
             deployApp(sshKey, projectDir, true);
             
@@ -231,19 +216,30 @@ public class HerokuDeployer {
         return sshKey;
     }
 
-    private static void commitProjectToLocalGit(File projectDir, boolean autoCommit, boolean interactive) {
+    private static void commitProjectToLocalGit(File projectDir, boolean interactive) throws IOException, NoFilepatternException, NoHeadException, NoMessageException, ConcurrentRefUpdateException, WrongRepositoryStateException {
 
-        // see if a .git exists in the project dir
+        Repository gitRepo = getGitRepository(projectDir);
+        if (!gitRepo.getDirectory().exists()) {
+            gitRepo.create();
+            
+            if (interactive) {
+                System.out.println("Created a .git directory for your project");
+            }
+        }
+        
+        File gitIgnore = new File(projectDir, ".gitignore");
 
-        // if not, create a git repo
+        if (!gitIgnore.exists()) {
+            FileUtils.copyInputStreamToFile(HerokuDeployer.class.getClassLoader().getResourceAsStream("gitignore"), gitIgnore);
+        }
 
-        // check for .gitignore and dirs that should not be committed
+        Git git = new Git(gitRepo);
+        git.add().addFilepattern(".").call();
+        git.commit().setMessage("Auto-Commit at " + (new Date()).toString()).call();
 
-        // create .gitignore if needed
-
-        // check for uncommitted changes
-
-        // commit changes
+        if (interactive) {
+            System.out.println("Added and committed all of the local changes to the git repo");
+        }
 
     }
 
