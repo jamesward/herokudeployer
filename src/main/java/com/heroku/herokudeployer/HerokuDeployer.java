@@ -21,9 +21,7 @@ import org.eclipse.jgit.lib.RepositoryBuilder;
 import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.transport.SshSessionFactory;
 
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
 
 public class HerokuDeployer {
@@ -101,11 +99,28 @@ public class HerokuDeployer {
             
             if (interactive) {
                 // ask for username / password
-                
+                System.out.println("Please login with your Heroku.com credentials");
+                System.out.print("Email: ");
+                BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
+                herokuUsername = in.readLine();
+                System.out.print("Password: ");
+                herokuPassword = in.readLine();  //todo: add masking
             }
             else {
-                // check env vars
+                // check java opts and env vars
+                if (System.getProperty("heroku.username") != null) {
+                    herokuUsername = System.getProperty("heroku.username");
+                }
+                else if (System.getenv("HEROKU_USERNAME") != null) {
+                    herokuUsername = System.getenv("HEROKU_USERNAME");
+                }
 
+                if (System.getProperty("heroku.password") != null) {
+                    herokuUsername = System.getProperty("heroku.password");
+                }
+                else if (System.getenv("HEROKU_PASSWORD") != null) {
+                    herokuUsername = System.getenv("HEROKU_PASSWORD");
+                }
             }
             
             if ((herokuUsername == null) || (herokuPassword == null)) {
@@ -292,6 +307,9 @@ public class HerokuDeployer {
 
     public static void deployApp(File sshKey, File projectDir, boolean interactive) throws IOException, InvalidRemoteException {
         SshSessionFactory.setInstance(new HerokuSshSessionFactory());
+        if (interactive) {
+            System.out.println("Deploying application via git push");
+        }
 
         // git push heroku master
         Repository gitRepo = getGitRepository(projectDir);
