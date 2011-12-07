@@ -1,0 +1,13 @@
+/target
+/tmp
+/.idea
+/*.iml
+/.idea_modules
+/out
+/lib
+/project/project
+/project/target
+/logs
+/.gradle
+/build
+/log.roo
