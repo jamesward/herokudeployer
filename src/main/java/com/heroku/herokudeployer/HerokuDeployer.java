@@ -1,10 +1,10 @@
 package com.heroku.herokudeployer;
 
+import com.heroku.api.App;
 import com.heroku.api.Heroku;
+import com.heroku.api.HerokuAPI;
+import com.heroku.api.Key;
 import com.heroku.api.connection.HttpClientConnection;
-import com.heroku.api.model.App;
-import com.heroku.api.model.Key;
-import com.heroku.api.request.app.AppCreate;
 import com.heroku.api.request.key.KeyAdd;
 import com.heroku.api.request.key.KeyList;
 import com.heroku.api.request.login.BasicAuthLogin;
@@ -186,6 +186,7 @@ public class HerokuDeployer {
             }
         }
 
+        // todo: have user specific ssh keys (i.e. heroku_jw+test@heroku.com_rsa)
         if (sshKey == null) {
             // save it in ~/.ssh/heroku_rsa and ~/.ssh/heroku_rsa.pub
             JSch jsch = new JSch();
@@ -280,17 +281,15 @@ public class HerokuDeployer {
 
         // if not then create a new one
         if (gitUrl == null) {
-            HttpClientConnection herokuConnection = new HttpClientConnection(herokuApiKey);
-
             // create an app on heroku
-            AppCreate cmd = new AppCreate(Heroku.Stack.Cedar);
-            App app = herokuConnection.execute(cmd);
+            HerokuAPI api = new HerokuAPI(herokuApiKey);
+            App app = api.createApp(new App().on(Heroku.Stack.Cedar));
 
             if (interactive) {
-                System.out.println("Created app: " + app.getName() + "\n" + app.getWeb_url());
+                System.out.println("Created app: " + app.getName() + "\n" + app.getWebUrl());
             }
 
-            gitUrl = app.getGit_url();
+            gitUrl = app.getGitUrl();
 
             // add the git remote
             storedConfig.setString("remote", HEROKU, "url", gitUrl);
