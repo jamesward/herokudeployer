@@ -4,11 +4,6 @@ import com.heroku.api.App;
 import com.heroku.api.Heroku;
 import com.heroku.api.HerokuAPI;
 import com.heroku.api.Key;
-import com.heroku.api.connection.HttpClientConnection;
-import com.heroku.api.request.key.KeyAdd;
-import com.heroku.api.request.key.KeyList;
-import com.heroku.api.request.login.BasicAuthLogin;
-import com.heroku.api.response.Unit;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.JSchException;
 import com.jcraft.jsch.KeyPair;
@@ -128,8 +123,7 @@ public class HerokuDeployer {
             }
 
             // login to get API key
-            HttpClientConnection herokuConnection = new HttpClientConnection(new BasicAuthLogin(herokuUsername, herokuPassword));
-            herokuApiKey = herokuConnection.getApiKey();
+            herokuApiKey = HerokuAPI.obtainApiKey(herokuUsername, herokuPassword);
             
             if (interactive) {
                 System.out.println("Logged into Heroku");
@@ -165,9 +159,9 @@ public class HerokuDeployer {
         }
 
         // check for a heroku user key
-        HttpClientConnection herokuConnection = new HttpClientConnection(herokuApiKey);
-        KeyList keyListReq = new KeyList();
-        List<Key> keys = herokuConnection.execute(keyListReq);
+        HerokuAPI herokuAPI = new HerokuAPI(herokuApiKey);
+
+        List<Key> keys = herokuAPI.listKeys();
 
         // see if any of the keys exist on the system
         for (Key key : keys) {
@@ -217,10 +211,10 @@ public class HerokuDeployer {
             String sshPublicKey = new String(publicKeyOutputStream.toByteArray());
 
             // associate the key with the heroku account
-            KeyAdd keyAddReq = new KeyAdd(sshPublicKey);
-            Unit keyAddResp = herokuConnection.execute(keyAddReq);
-
-            if (keyAddResp == null) {
+            try {
+              herokuAPI.addKey(sshPublicKey);
+            }
+            catch (Exception e) {
                 throw new RuntimeException("Could not associate the ssh key with the Heroku account");
             }
             
